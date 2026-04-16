@@ -2,14 +2,16 @@
 
 #include <QApplication>
 
-/**
- * @brief Точка входа в приложение.
- * @param argc Количество аргументов командной строки.
- * @param argv Массив аргументов командной строки.
- * @return Код завершения приложения.
- */
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_WIN
+    SetProcessAffinityMask(GetCurrentProcess(), 1);
+#endif
+
     QApplication app(argc, argv);
 
     MainWindow window;
