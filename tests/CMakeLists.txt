@@ -1,9 +1,3 @@
-set(TEST_SOURCES
-    test_mypoint.cpp
-    test_pointswidget.cpp
-    test_worker.cpp
-)
-
 # test_mypoint
 add_executable(test_mypoint
     test_mypoint.cpp
@@ -50,3 +44,34 @@ target_link_libraries(test_worker
 )
 
 add_test(NAME test_worker COMMAND test_worker)
+
+# test_mainwindow
+add_executable(test_mainwindow
+    test_mainwindow.cpp
+    ${CMAKE_SOURCE_DIR}/app/include/mainwindow.h
+    ${CMAKE_SOURCE_DIR}/app/src/mainwindow.cpp
+    ${CMAKE_SOURCE_DIR}/app/src/mainwindow.ui
+)
+
+target_include_directories(test_mainwindow
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/app/include
+)
+
+target_link_libraries(test_mainwindow
+    PRIVATE
+        workers_core
+        workers_widgets
+        Qt${QT_VERSION_MAJOR}::Core
+        Qt${QT_VERSION_MAJOR}::Gui
+        Qt${QT_VERSION_MAJOR}::Widgets
+        Qt${QT_VERSION_MAJOR}::Test
+)
+
+add_test(NAME test_mainwindow COMMAND test_mainwindow)
+
+if(UNIX AND NOT APPLE)
+    set_tests_properties(test_mainwindow PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endif()
