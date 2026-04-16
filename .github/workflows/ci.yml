@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt 5.14.2 and MinGW 7.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.14.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw73'
+          tools: 'tools_mingw,qt.tools.win64_mingw730'
+          cache: 'true'
+
+      - name: Show tool versions
+        shell: pwsh
+        run: |
+          qmake --version
+          gcc --version
+          g++ --version
+          cmake --version
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        shell: pwsh
+        run: ctest --test-dir build --output-on-failure
