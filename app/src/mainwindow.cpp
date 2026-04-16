@@ -120,7 +120,7 @@ void MainWindow::initializeRunSettings_()
 {
     m_runSettings.startX = 0;
     m_runSettings.stepsPerWorker = 120;
-    m_runSettings.delayIterations = Worker::kDefaultDelayIterations / 5;
+    m_runSettings.delayIterations = Worker::kDefaultDelayIterations;
 }
 
 //--------------------------------------------------------------------------
