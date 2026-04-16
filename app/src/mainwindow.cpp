@@ -3,17 +3,12 @@
 
 #include "pointswidget.h"
 
+#include <QColor>
 #include <QHBoxLayout>
 #include <QStatusBar>
 #include <QThread>
-#include <QWidget>
 
-//--------------------------------------------------------------------------
 
-/**
- * @brief Создаёт главное окно и подготавливает интерфейс.
- * @param parent Родительский виджет.
- */
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -23,24 +18,19 @@ MainWindow::MainWindow(QWidget *parent)
     qRegisterMetaType<MyPoint>("MyPoint");
 
     initializeUi_();
+    initializeRunSettings_();
 }
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Освобождает ресурсы главного окна.
- */
 MainWindow::~MainWindow()
 {
+    waitForRunningThreads_();
     delete ui;
 }
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Добавляет новую точку на сцену отображения.
- * @param point Точка, полученная от worker-объекта.
- */
 void MainWindow::slotAddPoint(MyPoint point)
 {
     if (!m_pointsWidget) {
@@ -52,46 +42,52 @@ void MainWindow::slotAddPoint(MyPoint point)
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Очищает текущее отображение точек.
- */
-void MainWindow::slotClear()
+void MainWindow::slotQThread()
 {
-    resetSharedX_();
+    cleanupNullPointers_();
 
-    if (!m_pointsWidget) {
+    if (hasRunningThreads_()) {
+        showStatusText_(QStringLiteral("Потоки ещё работают. Дождись завершения текущего запуска."));
         return;
     }
 
-    m_pointsWidget->clearPoints();
-    updateStatusBarText_();
+    resetForNewRun_();
+
+    const int workerCount = workerCountForRun_();
+    m_workers.reserve(workerCount);
+    m_threads.reserve(workerCount);
+
+    for (int index = 0; index < workerCount; ++index) {
+        createAndStartWorkerThreadPair_(index);
+    }
+
+    showStatusText_(QStringLiteral("Запущено потоков: %1").arg(workerCount));
 }
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Обрабатывает команду запуска через QThread.
- *
- * @details
- * На текущем этапе подготавливается только состояние окна:
- * - очищается предыдущая визуализация;
- * - сбрасывается общая координата X.
- *
- * Полноценный запуск QThread будет реализован следующим шагом.
- */
+void MainWindow::slotClear()
+{
+    cleanupNullPointers_();
+
+    if (hasRunningThreads_()) {
+        showStatusText_(QStringLiteral("Очистка недоступна во время работы потоков."));
+        return;
+    }
+
+    resetForNewRun_();
+    showStatusText_(QStringLiteral("Сцена очищена."));
+}
+
+//--------------------------------------------------------------------------
+
 void MainWindow::on_actionQThread_triggered()
 {
-    slotClear();
-
-    statusBar()->showMessage(
-        QStringLiteral("Подготовка под запуск QThread выполнена. Реализацию потоков добавим следующим шагом."));
+    slotQThread();
 }
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Обрабатывает команду очистки.
- */
 void MainWindow::on_actionClear_triggered()
 {
     slotClear();
@@ -99,21 +95,16 @@ void MainWindow::on_actionClear_triggered()
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Выполняет начальную настройку интерфейса.
- */
 void MainWindow::initializeUi_()
 {
     setupPointsWidget_();
-    resetSharedX_();
-    updateStatusBarText_();
+
+    showStatusText_(
+        QStringLiteral("QThread::idealThreadCount()=%1").arg(QThread::idealThreadCount()));
 }
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Создаёт и размещает виджет отображения точек в centralwidget.
- */
 void MainWindow::setupPointsWidget_()
 {
     auto *layout = new QHBoxLayout(ui->centralwidget);
@@ -125,21 +116,164 @@ void MainWindow::setupPointsWidget_()
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Обновляет текст в status bar с числом рекомендованных потоков.
- */
-void MainWindow::updateStatusBarText_()
+void MainWindow::initializeRunSettings_()
 {
-    statusBar()->showMessage(
-        QStringLiteral("QThread::idealThreadCount()=%1").arg(QThread::idealThreadCount()));
+    m_runSettings.startX = 0;
+    m_runSettings.stepsPerWorker = 120;
+    m_runSettings.delayIterations = Worker::kDefaultDelayIterations / 5;
 }
 
 //--------------------------------------------------------------------------
 
-/**
- * @brief Сбрасывает общую координату X в начальное состояние.
- */
-void MainWindow::resetSharedX_() noexcept
+void MainWindow::resetForNewRun_()
 {
-    m_X = 0;
+    m_X = m_runSettings.startX;
+
+    if (m_pointsWidget) {
+        m_pointsWidget->clearPoints();
+    }
+
+    m_workers.clear();
+    m_threads.clear();
+}
+
+//--------------------------------------------------------------------------
+
+void MainWindow::showStatusText_(const QString &text)
+{
+    statusBar()->showMessage(text);
+}
+
+//--------------------------------------------------------------------------
+
+int MainWindow::workerCountForRun_() const noexcept
+{
+    return qMax(1, QThread::idealThreadCount() + 1);
+}
+
+//--------------------------------------------------------------------------
+
+int MainWindow::yForWorker_(int index) const noexcept
+{
+    constexpr int startY = 20;
+    constexpr int deltaY = 25;
+
+    return startY + index * deltaY;
+}
+
+//--------------------------------------------------------------------------
+
+QColor MainWindow::colorForWorker_(int index) const
+{
+    constexpr int hueStep = 45;
+    constexpr int saturation = 220;
+    constexpr int value = 200;
+
+    return QColor::fromHsv((index * hueStep) % 360, saturation, value);
+}
+
+//--------------------------------------------------------------------------
+
+void MainWindow::createAndStartWorkerThreadPair_(int index)
+{
+    auto *worker = new Worker(yForWorker_(index),
+                              &m_X,
+                              colorForWorker_(index),
+                              m_runSettings.stepsPerWorker,
+                              m_runSettings.delayIterations);
+
+    auto *thread = new QThread;
+
+    worker->moveToThread(thread);
+
+    connect(worker,
+            &Worker::signalAddPoint,
+            this,
+            &MainWindow::slotAddPoint,
+            Qt::QueuedConnection);
+
+    connect(thread,
+            &QThread::started,
+            worker,
+            &Worker::doWork);
+
+    connect(worker,
+            &Worker::endWork,
+            thread,
+            &QThread::quit);
+
+    connect(thread,
+            &QThread::finished,
+            worker,
+            &QObject::deleteLater);
+
+    connect(thread,
+            &QThread::finished,
+            thread,
+            &QObject::deleteLater);
+
+    connect(thread,
+            &QThread::finished,
+            this,
+            [this]()
+            {
+                cleanupNullPointers_();
+
+                if (!hasRunningThreads_()) {
+                    showStatusText_(QStringLiteral("Все потоки завершили работу."));
+                }
+            });
+
+    m_workers.push_back(worker);
+    m_threads.push_back(thread);
+
+    thread->start();
+}
+
+//--------------------------------------------------------------------------
+
+bool MainWindow::hasRunningThreads_() const noexcept
+{
+    for (const QPointer<QThread> &thread : m_threads) {
+        if (thread && thread->isRunning()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+//--------------------------------------------------------------------------
+
+void MainWindow::cleanupNullPointers_()
+{
+    for (int index = m_workers.size() - 1; index >= 0; --index) {
+        if (m_workers.at(index).isNull()) {
+            m_workers.removeAt(index);
+        }
+    }
+
+    for (int index = m_threads.size() - 1; index >= 0; --index) {
+        if (m_threads.at(index).isNull()) {
+            m_threads.removeAt(index);
+        }
+    }
+}
+
+//--------------------------------------------------------------------------
+
+void MainWindow::waitForRunningThreads_()
+{
+    cleanupNullPointers_();
+
+    for (const QPointer<QThread> &thread : m_threads) {
+        if (!thread) {
+            continue;
+        }
+
+        if (thread->isRunning()) {
+            thread->quit();
+            thread->wait();
+        }
+    }
 }

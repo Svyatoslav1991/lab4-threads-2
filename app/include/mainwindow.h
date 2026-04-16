@@ -2,8 +2,11 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QPointer>
+#include <QVector>
 
-#include "mypoint.h"
+#include "worker.h"
+#include "workersrunsettings.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -12,21 +15,20 @@ class MainWindow;
 QT_END_NAMESPACE
 
 class PointsWidget;
+class QThread;
 
 /**
- * @brief Главное окно приложения для демонстрации работы потоков через QThread.
+ * @brief Главное окно приложения для демонстрации работы Worker + QThread.
  *
  * @details
- * На данном шаге окно подготавливается к отображению работы потоков:
+ * Окно:
  * - хранит общую координату X;
- * - содержит виджет визуализации точек;
- * - принимает точки от worker-объектов;
- * - очищает отображение;
- * - обрабатывает команды меню.
+ * - запускает набор рабочих объектов Worker в отдельных экземплярах QThread;
+ * - получает точки от worker-объектов и передаёт их в PointsWidget;
+ * - выполняет очистку сцены;
+ * - аккуратно завершает активные потоки при закрытии приложения.
  *
- * Важно:
- * контейнер точек и отрисовка не дублируются в MainWindow,
- * так как уже реализованы в классе PointsWidget из библиотеки workers_widgets.
+ * Контейнер точек и отрисовка находятся в PointsWidget и здесь не дублируются.
  */
 class MainWindow final : public QMainWindow
 {
@@ -41,32 +43,36 @@ public:
 
     /**
      * @brief Уничтожает главное окно приложения.
+     *
+     * @details
+     * Перед уничтожением окна ожидает завершения активных потоков.
      */
     ~MainWindow() override;
 
 private slots:
     /**
-     * @brief Добавляет новую точку на сцену отображения.
+     * @brief Добавляет новую точку на сцену.
      * @param point Точка, полученная от worker-объекта.
      */
     void slotAddPoint(MyPoint point);
 
     /**
-     * @brief Очищает текущее отображение точек.
+     * @brief Запускает набор worker-объектов через QThread.
+     */
+    void slotQThread();
+
+    /**
+     * @brief Очищает текущую сцену.
      */
     void slotClear();
 
     /**
-     * @brief Обрабатывает команду запуска через QThread.
-     *
-     * @details
-     * Пока на данном шаге выполняется только подготовка состояния окна.
-     * Полный запуск потоков будет добавлен следующим этапом.
+     * @brief Обрабатывает action запуска через QThread.
      */
     void on_actionQThread_triggered();
 
     /**
-     * @brief Обрабатывает команду очистки.
+     * @brief Обрабатывает action очистки.
      */
     void on_actionClear_triggered();
 
@@ -77,24 +83,71 @@ private:
     void initializeUi_();
 
     /**
-     * @brief Создаёт и размещает виджет отображения точек в centralwidget.
+     * @brief Создаёт и размещает PointsWidget в centralwidget.
      */
     void setupPointsWidget_();
 
     /**
-     * @brief Обновляет текст в status bar с числом рекомендованных потоков.
+     * @brief Настраивает параметры запуска worker-объектов.
      */
-    void updateStatusBarText_();
+    void initializeRunSettings_();
 
     /**
-     * @brief Сбрасывает общую координату X в начальное состояние.
+     * @brief Сбрасывает сцену перед новым запуском.
      */
-    void resetSharedX_() noexcept;
+    void resetForNewRun_();
+
+    /**
+     * @brief Обновляет текст status bar.
+     * @param text Текст для отображения.
+     */
+    void showStatusText_(const QString &text);
+
+    /**
+     * @brief Возвращает количество worker-объектов для запуска.
+     */
+    int workerCountForRun_() const noexcept;
+
+    /**
+     * @brief Возвращает координату Y для worker-а с заданным индексом.
+     * @param index Индекс worker-а.
+     */
+    int yForWorker_(int index) const noexcept;
+
+    /**
+     * @brief Возвращает цвет для worker-а с заданным индексом.
+     * @param index Индекс worker-а.
+     */
+    QColor colorForWorker_(int index) const;
+
+    /**
+     * @brief Создаёт worker и поток для заданного индекса и запускает их.
+     * @param index Индекс worker-а.
+     */
+    void createAndStartWorkerThreadPair_(int index);
+
+    /**
+     * @brief Возвращает true, если хотя бы один поток ещё работает.
+     */
+    bool hasRunningThreads_() const noexcept;
+
+    /**
+     * @brief Удаляет из контейнеров уже уничтоженные объекты.
+     */
+    void cleanupNullPointers_();
+
+    /**
+     * @brief Ожидает завершения всех ещё работающих потоков.
+     */
+    void waitForRunningThreads_();
 
 private:
-    Ui::MainWindow *ui = nullptr;              ///< Объект интерфейса, сгенерированный из .ui.
-    PointsWidget *m_pointsWidget = nullptr;    ///< Виджет отображения точек.
-    int m_X = 0;                               ///< Общая для всех потоков координата X.
+    Ui::MainWindow *ui = nullptr;                 ///< Объект интерфейса, сгенерированный из .ui.
+    QPointer<PointsWidget> m_pointsWidget;        ///< Виджет отображения точек.
+    int m_X = 0;                                  ///< Общая координата X для всех worker-объектов.
+    WorkersRunSettings m_runSettings;             ///< Параметры одного запуска worker-объектов.
+    QVector<QPointer<Worker>> m_workers;          ///< Контейнер рабочих объектов.
+    QVector<QPointer<QThread>> m_threads;         ///< Контейнер потоков.
 };
 
 #endif // MAINWINDOW_H
